@@ -1,6 +1,5 @@
 # encoding: utf-8
 # thanks for https://github.com/nowa/carrierwave-upyun/blob/master/spec/upload_spec.rb
-
 require File.dirname(__FILE__) + '/spec_helper'
 require "open-uri"
 
@@ -21,7 +20,15 @@ describe "CarrierWave Qiniu" do
     end
   end
 
+require 'carrierwave/processing/mini_magick'
   class PhotoUploader < CarrierWave::Uploader::Base
+    include CarrierWave::MiniMagick
+
+    self.qiniu_can_overwrite = true
+
+    version :thumb do
+          process :resize_to_fill => [200, 200]
+    end
 
     def store_dir
       "carrierwave-qiniu-spec"
@@ -56,7 +63,6 @@ describe "CarrierWave Qiniu" do
     mount_uploader :image, PhotoUploader
   end
 
-
   before :all do
     setup_db
   end
@@ -66,20 +72,65 @@ describe "CarrierWave Qiniu" do
   end
 
   context "Upload Image" do
+    it "should save failed" do
+      class WrongUploader < PhotoUploader
+        self.qiniu_bucket = 'not_exists'
+      end
+
+      class Photo < ActiveRecord::Base
+        mount_uploader :image, WrongUploader
+      end
+
+      f = load_file("mm.jpg")
+      photo = Photo.new(:image => f)
+      photo.save
+      expect(photo).to_not be_valid
+
+      expect {
+        photo.save!
+      }.to raise_error
+    end
+
     it "does upload image" do
       f = load_file("mm.jpg")
       photo = Photo.new(:image => f)
       photo.save
 
+      puts photo.errors.full_messages if photo.errors.count > 0
+
       photo.errors.count.should == 0
 
-      puts ""
       puts 'The image was uploaded to:'
-      puts ""
+      puts photo.image.url
 
       open(photo.image.url).should_not be_nil
 
-      puts photo.image.url
+
+      puts "The thumb image:"
+      puts photo.image.url(:thumb)
+
+      open(photo.image.thumb.url).should_not be_nil
+
+    end
+
+    it 'does copy from image works' do
+      f = load_file("mm.jpg")
+
+      photo = Photo.new(image: f)
+
+      photo.save
+
+      photo2 = Photo.new
+
+      photo2.image = photo.image
+
+      photo2.save
+
+      puts "The image was copied from #{photo.image.url} to #{photo2.image.url}"
+
+      expect(photo2.image.url).not_to eq(photo.image.url)
+
+      open(photo2.image.url).should_not be_nil
     end
   end
 end
